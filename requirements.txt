@@ -1,0 +1,7 @@
+flask>=3.0
+numpy>=1.24
+opencv-python>=4.7
+
+# Optional: faster Gaussian smoothing and nearest-neighbour loss computation.
+# Falls back to pure-numpy implementations when not installed.
+# scipy>=1.10

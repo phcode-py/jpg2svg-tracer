@@ -93,11 +93,32 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--simplify",
-        choices=["vw", "rdp"], default="vw",
+        choices=["vw", "rdp", "arch"], default="vw",
         help=(
             "Simplification algorithm. "
             "'vw' (default): Visvalingam-Whyatt + Catmull-Rom curves, best for organic shapes. "
-            "'rdp': Ramer-Douglas-Peucker + straight lines, best for architectural/technical drawings."
+            "'rdp': Ramer-Douglas-Peucker + straight lines, best for architectural/technical drawings. "
+            "'arch': Architectural Plan mode — two-pass: skeleton on thick lines (--thick-threshold) "
+            "with half the point budget, then RDP on the full image for details."
+        ),
+    )
+    parser.add_argument(
+        "--thick-threshold",
+        type=int, default=None, dest="thick_threshold",
+        help=(
+            "Binarization threshold (0-255) for the first pass of --simplify arch. "
+            "Set high enough that only thick black lines are visible (e.g. 50-100). Required for arch mode."
+        ),
+    )
+    parser.add_argument(
+        "--skeleton",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="skeletonize",
+        help=(
+            "Extract skeleton centerlines instead of perimeter contours. "
+            "Eliminates webbing at intersections of thick lines. "
+            "Default: off for all modes (use --simplify arch for the combined approach)."
         ),
     )
     return parser.parse_args()
@@ -126,6 +147,8 @@ def main() -> None:
             arc_tolerance=arc_tol,
             min_vw_points=args.min_vw_points,
             simplify=args.simplify,
+            skeletonize=args.skeletonize,
+            thick_threshold=args.thick_threshold,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -141,7 +164,8 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    mode_label = {"vw": "VW+Bezier", "rdp": "RDP+lines"}[stats["simplify"]]
+    skel_label = "+Skeleton" if stats.get("skeleton") and stats["simplify"] != "arch" else ""
+    mode_label = {"vw": "VW+Bezier", "rdp": "RDP+lines", "arch": "Arch (skel+RDP)"}[stats["simplify"]] + skel_label
     print(f"Size:     {stats['width']} x {stats['height']} px")
     print(f"Mode:     {mode_label}")
     print(f"Contours: {stats['contours']}")
@@ -153,7 +177,7 @@ def main() -> None:
     else:
         print(f"RDP eps:  {stats['epsilon']:.4f} px (max point-to-chord deviation)")
     print(f"Loss:     {stats['loss']:.4f} px (mean deviation from original)")
-    if arc_tol is not None:
+    if arc_tol is not None and not stats.get("skeleton"):
         print(f"Arc segs: arcs detected in {stats['arc_count']}/{stats['contours']} paths")
 
     try:

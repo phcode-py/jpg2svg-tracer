@@ -35,7 +35,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 0 20px;
+      padding: 0 16px 0 20px;
       height: 48px;
       background: var(--panel);
       border-bottom: 1px solid var(--border);
@@ -138,9 +138,41 @@
     }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-primary:hover:not(:disabled) { background: var(--accent2); }
-    .btn-secondary { background: var(--bg); border: 1px solid var(--border); }
+    .btn-secondary { background: var(--bg); border: 1px solid var(--border); color: var(--text); }
     .btn-secondary:hover:not(:disabled) { background: var(--border); }
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* header download button */
+    .btn-download {
+      margin-left: auto;
+      padding: 6px 16px;
+      flex: none;
+      white-space: nowrap;
+    }
+
+    /* Advanced collapsible */
+    details {
+      border-top: 1px solid var(--border);
+      padding-top: 4px;
+    }
+    details summary {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 4px 0;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    .adv-arrow { transition: transform 0.15s; display: inline-block; }
+    details[open] .adv-arrow { transform: rotate(90deg); }
+    .adv-content { display: flex; flex-direction: column; gap: 14px; padding-top: 10px; }
 
     /* ── Main preview area ───────────────────────────────────────────── */
     .preview-area {
@@ -271,6 +303,7 @@
 <header>
   <h1>jpgtracer</h1>
   <p>raster → SVG vector</p>
+  <button class="btn btn-secondary btn-download" id="downloadBtn" disabled>💾 Save SVG</button>
 </header>
 
 <div class="layout">
@@ -289,6 +322,15 @@
     <div class="section">Simplification</div>
 
     <div class="slider-row">
+      <div class="slider-head"><span>Mode</span></div>
+      <select id="simplify" style="width:100%;padding:5px 6px;border:1px solid var(--border);border-radius:var(--radius);font-size:0.82rem;background:var(--panel);color:var(--text);cursor:pointer;">
+        <option value="vw">🌿 VW + Bezier (organic)</option>
+        <option value="rdp">📐 RDP + straight lines (technical)</option>
+        <option value="arch">🏛️ Architectural Plan (two-pass)</option>
+      </select>
+    </div>
+
+    <div class="slider-row">
       <div class="slider-head">
         <span>Max Points</span>
         <span class="val" id="val_max_points">500</span>
@@ -304,24 +346,8 @@
       <input type="range" id="contour_smooth" min="0" max="5" step="0.1" value="1.5">
     </div>
 
-    <div class="slider-row">
-      <div class="slider-head">
-        <span>Min Contour Area</span>
-        <span class="val" id="val_min_contour_area">10</span>
-      </div>
-      <input type="range" id="min_contour_area" min="1" max="500" step="1" value="10">
-    </div>
-
-    <div class="slider-row">
-      <div class="slider-head">
-        <span>Declutter (min VW pts)</span>
-        <span class="val" id="val_min_vw_points">0</span>
-      </div>
-      <input type="range" id="min_vw_points" min="0" max="20" step="1" value="0">
-    </div>
-
     <!-- Curves -->
-    <div class="section">Curves</div>
+    <div class="section">Curves (only for Bezier mode)</div>
 
     <div class="slider-row">
       <div class="slider-head">
@@ -337,22 +363,6 @@
         <span class="val" id="val_straight_threshold">1.0</span>
       </div>
       <input type="range" id="straight_threshold" min="0" max="10" step="0.1" value="1.0">
-    </div>
-
-    <!-- Arc Detection -->
-    <div class="section">Arc Detection</div>
-
-    <label class="check-row">
-      <input type="checkbox" id="no_arcs">
-      Disable arc detection
-    </label>
-
-    <div class="slider-row" id="arc_tol_row">
-      <div class="slider-head">
-        <span>Tolerance</span>
-        <span class="val" id="val_arc_tolerance">1.5</span>
-      </div>
-      <input type="range" id="arc_tolerance" min="0.1" max="10" step="0.1" value="1.5">
     </div>
 
     <!-- Rendering -->
@@ -374,18 +384,68 @@
       Manual threshold
     </label>
 
-    <div class="slider-row" id="thresh_row" style="display:none">
+    <div class="slider-row" id="thresh_row" style="opacity:0.35;pointer-events:none">
       <div class="slider-head">
         <span>Threshold</span>
         <span class="val" id="val_threshold">128</span>
       </div>
-      <input type="range" id="threshold" min="0" max="255" step="1" value="128">
+      <input type="range" id="threshold" min="0" max="255" step="1" value="128" disabled>
     </div>
+
+    <div class="slider-row" id="thick_thresh_row" style="display:none">
+      <div class="slider-head">
+        <span>Thick Line Threshold</span>
+        <span class="val" id="val_thick_threshold">80</span>
+      </div>
+      <input type="range" id="thick_threshold" min="0" max="255" step="1" value="80">
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:2px">Pass 1: raise until only thick lines remain</div>
+    </div>
+
+    <!-- Advanced (collapsible) -->
+    <details>
+      <summary>
+        <span>⚙️ Advanced</span>
+        <span class="adv-arrow">▸</span>
+      </summary>
+      <div class="adv-content">
+
+        <div class="slider-row">
+          <div class="slider-head">
+            <span>Min Contour Area</span>
+            <span class="val" id="val_min_contour_area">10</span>
+          </div>
+          <input type="range" id="min_contour_area" min="1" max="500" step="1" value="10">
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-head">
+            <span>Declutter (min pts)</span>
+            <span class="val" id="val_min_vw_points">0</span>
+          </div>
+          <input type="range" id="min_vw_points" min="0" max="20" step="1" value="0">
+        </div>
+
+        <div class="section" style="margin-top:2px">Arc Detection</div>
+
+        <label class="check-row">
+          <input type="checkbox" id="no_arcs" checked>
+          Disable arc detection
+        </label>
+
+        <div class="slider-row" id="arc_tol_row" style="opacity:0.35;pointer-events:none">
+          <div class="slider-head">
+            <span>Tolerance</span>
+            <span class="val" id="val_arc_tolerance">1.5</span>
+          </div>
+          <input type="range" id="arc_tolerance" min="0.1" max="10" step="0.1" value="1.5" disabled>
+        </div>
+
+      </div>
+    </details>
 
     <!-- Actions -->
     <div class="actions">
-      <button class="btn btn-primary"   id="traceBtn"    disabled>Trace</button>
-      <button class="btn btn-secondary" id="downloadBtn" disabled>Save SVG</button>
+      <button class="btn btn-primary" id="traceBtn" disabled>Trace</button>
     </div>
 
   </aside>
@@ -411,7 +471,7 @@
     <div class="stats" id="statsBar">
       <span>Contours: <strong id="s_contours">—</strong></span>
       <span>Points: <strong id="s_points">—</strong></span>
-      <span>VW floor: <strong id="s_vw">—</strong> px²</span>
+      <span>Epsilon: <strong id="s_vw">—</strong></span>
       <span>Loss: <strong id="s_loss">—</strong> px</span>
       <span id="s_arcs_wrap" style="display:none">Arcs: <strong id="s_arcs">—</strong></span>
       <span id="s_freed_wrap" style="display:none">Freed: <strong id="s_freed">—</strong> pts</span>
@@ -449,13 +509,21 @@
   // ── Toggle controls ────────────────────────────────────────────────
   document.getElementById('no_arcs').addEventListener('change', e => {
     const row = document.getElementById('arc_tol_row');
-    row.style.opacity        = e.target.checked ? '0.35' : '1';
-    row.style.pointerEvents  = e.target.checked ? 'none'  : '';
+    row.style.opacity       = e.target.checked ? '0.35' : '1';
+    row.style.pointerEvents = e.target.checked ? 'none'  : '';
     row.querySelector('input').disabled = e.target.checked;
   });
 
   document.getElementById('manual_threshold').addEventListener('change', e => {
-    document.getElementById('thresh_row').style.display = e.target.checked ? '' : 'none';
+    const row = document.getElementById('thresh_row');
+    row.style.opacity       = e.target.checked ? '1'    : '0.35';
+    row.style.pointerEvents = e.target.checked ? ''     : 'none';
+    row.querySelector('input').disabled = !e.target.checked;
+  });
+
+  document.getElementById('simplify').addEventListener('change', e => {
+    document.getElementById('thick_thresh_row').style.display =
+      e.target.value === 'arch' ? '' : 'none';
   });
 
   // ── File upload ────────────────────────────────────────────────────
@@ -512,8 +580,11 @@
     fd.append('stroke_width',       document.getElementById('stroke_width').value);
     fd.append('min_contour_area',   document.getElementById('min_contour_area').value);
     fd.append('min_vw_points',      document.getElementById('min_vw_points').value);
+    fd.append('simplify',           document.getElementById('simplify').value);
     if (document.getElementById('manual_threshold').checked)
       fd.append('threshold', document.getElementById('threshold').value);
+    if (document.getElementById('simplify').value === 'arch')
+      fd.append('thick_threshold', document.getElementById('thick_threshold').value);
 
     try {
       const resp = await fetch('/trace', { method: 'POST', body: fd });
@@ -541,7 +612,7 @@
       const s = data.stats;
       document.getElementById('s_contours').textContent = s.contours;
       document.getElementById('s_points').textContent   = s.points;
-      document.getElementById('s_vw').textContent       = s.vw_floor;
+      document.getElementById('s_vw').textContent       = s.epsilon;
       document.getElementById('s_loss').textContent     = s.loss;
 
       const arcsWrap  = document.getElementById('s_arcs_wrap');

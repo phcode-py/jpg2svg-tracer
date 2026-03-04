@@ -252,6 +252,7 @@ def contours_to_svg_paths(
     arc_tolerance: float | None = None,
     arc_min_points: int = 4,
     arc_min_radius: float = 3.0,
+    closed: bool = True,
 ) -> list[str]:
     """Convert a list of simplified contours to SVG path strings.
 
@@ -267,16 +268,17 @@ def contours_to_svg_paths(
         arc_tolerance: Max mean residual (px) to accept a circle fit. None = disabled.
         arc_min_points: Minimum VW points needed to trigger arc detection.
         arc_min_radius: Circles below this radius (px) are not replaced with arcs.
+        closed: If False, paths are open polylines (no Z); arc detection is skipped.
 
     Returns:
         List of non-empty SVG `d` strings.
     """
-    if arc_tolerance is not None:
+    if closed and arc_tolerance is not None:
         from arc_detector import segment_contour
 
     paths = []
     for contour in contours:
-        if arc_tolerance is not None and len(contour) >= arc_min_points:
+        if closed and arc_tolerance is not None and len(contour) >= arc_min_points:
             segs = segment_contour(
                 contour,
                 tolerance=arc_tolerance,
@@ -288,7 +290,7 @@ def contours_to_svg_paths(
             d = points_to_svg_path(
                 contour,
                 tension=tension,
-                closed=True,
+                closed=closed,
                 precision=precision,
                 straight_threshold=straight_threshold,
             )

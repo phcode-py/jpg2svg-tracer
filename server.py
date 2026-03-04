@@ -41,6 +41,12 @@ def trace_endpoint():
         no_arcs = request.form.get("no_arcs") == "true"
         threshold_raw = request.form.get("threshold")
         threshold = int(threshold_raw) if threshold_raw else None
+        thick_threshold_raw = request.form.get("thick_threshold")
+        thick_threshold = int(thick_threshold_raw) if thick_threshold_raw else None
+
+        simplify = request.form.get("simplify", "vw")
+        skel_raw = request.form.get("skeletonize")
+        skeletonize = None if skel_raw is None else (skel_raw == "true")
 
         svg, stats = trace(
             tmp.name,
@@ -53,6 +59,9 @@ def trace_endpoint():
             straight_threshold=float(request.form.get("straight_threshold", 1.0)),
             arc_tolerance=None if no_arcs else float(request.form.get("arc_tolerance", 1.5)),
             min_vw_points=int(request.form.get("min_vw_points", 0)),
+            simplify=simplify,
+            skeletonize=skeletonize,
+            thick_threshold=thick_threshold,
         )
     except (FileNotFoundError, ValueError) as exc:
         return Response(str(exc), status=400)

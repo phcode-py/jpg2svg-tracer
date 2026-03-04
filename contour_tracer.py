@@ -140,13 +140,19 @@ def find_raw_contours(
           - cv_contours: OpenCV-native (N, 1, 2) int32 arrays.
           - float_contours: Corresponding (N, 2) float64 arrays.
     """
+    h, w = binary.shape[:2]
+    image_area = float(h * w)
     raw, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
 
     cv_contours, float_contours = [], []
     for c in raw:
-        if cv2.contourArea(c) >= min_contour_area:
-            cv_contours.append(c)
-            float_contours.append(c.reshape(-1, 2).astype(np.float64))
+        area = cv2.contourArea(c)
+        if area < min_contour_area:
+            continue
+        if area > 0.9 * image_area:
+            continue  # discard background boundary contour
+        cv_contours.append(c)
+        float_contours.append(c.reshape(-1, 2).astype(np.float64))
 
     return cv_contours, float_contours
 
@@ -327,25 +333,26 @@ def find_contours_rdp(
 
     for fc, raw_len in zip(float_contours, raw_lengths):
         budget = round(max_points * raw_len / total_raw)
-        if budget < 3:
-            continue   # contour's share of the budget is too small for a valid polygon
+        if budget < 2:
+            continue   # contour's share of the budget is too small
 
         if len(fc) <= budget:
             simp = fc.copy()
         else:
-            simp = _rdp_to_budget(fc, budget)
+            simp = _rdp_to_budget_open(fc, budget)
             # Estimate this contour's epsilon for reporting (hi after convergence).
+            pts_cv = fc.astype(np.float32).reshape(-1, 1, 2)
             span = float(np.linalg.norm(fc.max(axis=0) - fc.min(axis=0)))
             lo2, hi2 = 0.0, max(span, 1.0)
             for _ in range(30):
                 mid = (lo2 + hi2) / 2
-                if len(_rdp_contour(fc, mid)) <= budget:
+                if len(cv2.approxPolyDP(pts_cv, mid, closed=False)) <= budget:
                     hi2 = mid
                 else:
                     lo2 = mid
             max_epsilon = max(max_epsilon, hi2)
 
-        if len(simp) < 3:
+        if len(simp) < 2:
             continue
 
         simplified_contours.append(simp)
@@ -355,3 +362,109 @@ def find_contours_rdp(
 
     weighted_loss = total_loss / total_original_points if total_original_points > 0 else 0.0
     return simplified_contours, max_epsilon, weighted_loss
+
+
+def _rdp_to_budget_open(points: np.ndarray, target_n: int) -> np.ndarray:
+    """RDP-simplify an open path to approximately target_n points (minimum 2)."""
+    target_n = max(2, target_n)
+    if len(points) <= target_n:
+        return points.copy()
+    span = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
+    lo, hi = 0.0, max(span, 1.0)
+    pts_cv = points.astype(np.float32).reshape(-1, 1, 2)
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if len(cv2.approxPolyDP(pts_cv, mid, closed=False)) <= target_n:
+            hi = mid
+        else:
+            lo = mid
+    result = cv2.approxPolyDP(pts_cv, hi, closed=False).reshape(-1, 2).astype(np.float64)
+    if len(result) < 2:
+        result = cv2.approxPolyDP(pts_cv, lo, closed=False).reshape(-1, 2).astype(np.float64)
+    return result
+
+
+def find_skeleton_paths(
+    binary: np.ndarray,
+    max_points: int = 500,
+    min_contour_area: float = 10.0,
+    contour_smooth: float = 0.0,
+    simplify: str = "rdp",
+) -> tuple[list[SimplifiedContour], float, float]:
+    """Extract and simplify centerline skeleton paths from a binary image.
+
+    Uses Zhang-Suen skeletonization to convert thick strokes to 1-pixel-wide
+    centerlines, then simplifies them with proportional budget allocation.
+    Eliminates the "webbing" artifact at intersections that occurs when tracing
+    perimeter contours of thick lines with RDP.
+
+    Args:
+        binary: uint8 (H, W) array with foreground as white.
+        max_points: Maximum total simplified points across all paths.
+        min_contour_area: Paths with fewer than sqrt(min_contour_area) raw
+            pixels are discarded (analogous to area filtering for contours).
+        contour_smooth: Gaussian sigma applied to raw skeleton paths (px).
+        simplify: "rdp" (straight-line segments) or "vw" (Catmull-Rom curves).
+
+    Returns:
+        (simplified_paths, metric, weighted_loss):
+          - simplified_paths: List of open (N, 2) float64 path arrays.
+          - metric: Largest RDP epsilon or VW triangle area used (display only).
+          - weighted_loss: Weighted mean deviation from raw skeleton paths.
+    """
+    from image_processing import skeleton_paths as _skel_paths
+
+    min_px = max(4, int(min_contour_area ** 0.5))
+    raw_paths = _skel_paths(binary, min_path_pixels=min_px)
+    if not raw_paths:
+        return [], 0.0, 0.0
+
+    if contour_smooth > 0.0:
+        raw_paths = [_smooth_contour(p, contour_smooth, closed=False) for p in raw_paths]
+
+    raw_lengths = [len(p) for p in raw_paths]
+    total_raw = sum(raw_lengths)
+
+    simplified: list[SimplifiedContour] = []
+    total_loss = 0.0
+    total_original = 0
+    global_metric = 0.0
+
+    for path, raw_len in zip(raw_paths, raw_lengths):
+        budget = round(max_points * raw_len / total_raw)
+        if budget < 2:
+            continue
+
+        if simplify == "rdp":
+            if len(path) <= budget:
+                simp = path.copy()
+                eps = 0.0
+            else:
+                simp = _rdp_to_budget_open(path, budget)
+                # Estimate per-path epsilon for reporting.
+                span = float(np.linalg.norm(path.max(axis=0) - path.min(axis=0)))
+                lo2, hi2 = 0.0, max(span, 1.0)
+                pts_cv = path.astype(np.float32).reshape(-1, 1, 2)
+                for _ in range(30):
+                    mid = (lo2 + hi2) / 2
+                    if len(cv2.approxPolyDP(pts_cv, mid, closed=False)) <= budget:
+                        hi2 = mid
+                    else:
+                        lo2 = mid
+                eps = hi2
+            global_metric = max(global_metric, eps)
+            if len(simp) < 2:
+                continue
+        else:  # vw
+            simp, min_area = _visvalingam_whyatt(path, budget, closed=False)
+            global_metric = max(global_metric, min_area)
+            if len(simp) < 2:
+                continue
+
+        simplified.append(simp)
+        n = len(path)
+        total_loss += _compute_loss(path, simp) * n
+        total_original += n
+
+    weighted_loss = total_loss / total_original if total_original > 0 else 0.0
+    return simplified, global_metric, weighted_loss
