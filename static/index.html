@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>jpgtracer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #f0f0f0;
+      --panel:   #ffffff;
+      --border:  #d8d8d8;
+      --accent:  #2563eb;
+      --accent2: #1d4ed8;
+      --text:    #1a1a1a;
+      --muted:   #666;
+      --radius:  8px;
+      --sidebar: 272px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px;
+      height: 48px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; }
+    header p  { color: var(--muted); font-size: 0.8rem; }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .layout {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar);
+      min-width: var(--sidebar);
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 14px 14px 20px;
+      gap: 14px;
+    }
+
+    /* upload */
+    .upload-zone {
+      position: relative;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 20px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      user-select: none;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: #eff6ff;
+    }
+    .upload-zone.loaded { border-style: solid; border-color: var(--accent); }
+    .upload-zone input  { display: none; }
+    .upload-icon { font-size: 1.6rem; line-height: 1; }
+    .upload-label { margin-top: 6px; font-size: 0.82rem; font-weight: 500; }
+    .upload-sub   { margin-top: 3px; font-size: 0.74rem; color: var(--muted); }
+
+    /* section labels */
+    .section {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: -6px;
+    }
+
+    /* sliders */
+    .slider-row { display: flex; flex-direction: column; gap: 4px; }
+    .slider-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+    }
+    .slider-head .val {
+      font-weight: 600;
+      color: var(--accent);
+      min-width: 38px;
+      text-align: right;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    input[type="range"]:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* checkboxes */
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .check-row input { accent-color: var(--accent); cursor: pointer; }
+
+    /* action buttons */
+    .actions { display: flex; gap: 8px; }
+    .btn {
+      flex: 1;
+      padding: 9px 0;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent2); }
+    .btn-secondary { background: var(--bg); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ── Main preview area ───────────────────────────────────────────── */
+    .preview-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .previews {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .pane {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .pane-title {
+      flex-shrink: 0;
+      padding: 7px 12px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .pane-content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 8px;
+      background: #fafafa;
+    }
+    .pane-content img,
+    .pane-content svg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .placeholder {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* stats bar */
+    .stats {
+      flex-shrink: 0;
+      display: none;
+      gap: 20px;
+      padding: 7px 14px;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .stats.visible { display: flex; flex-wrap: wrap; }
+    .stats strong { color: var(--text); font-weight: 600; }
+    .warn-badge {
+      display: none;
+      margin-left: auto;
+      color: #b45309;
+      font-size: 0.75rem;
+    }
+    .warn-badge.visible { display: inline; }
+
+    /* loading overlay */
+    .overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,0.75);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--muted);
+      backdrop-filter: blur(2px);
+    }
+    .overlay.visible { display: flex; }
+
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* error toast */
+    .error-toast {
+      display: none;
+      position: absolute;
+      bottom: 54px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      color: #b91c1c;
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      font-size: 0.82rem;
+      max-width: 480px;
+      text-align: center;
+      z-index: 10;
+    }
+    .error-toast.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>jpgtracer</h1>
+  <p>raster → SVG vector</p>
+</header>
+
+<div class="layout">
+
+  <!-- ── Sidebar ────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept="image/*">
+      <div class="upload-icon" id="uploadIcon">📂</div>
+      <div class="upload-label" id="uploadLabel">Drop image here</div>
+      <div class="upload-sub" id="uploadSub">or click to browse</div>
+    </div>
+
+    <!-- Simplification -->
+    <div class="section">Simplification</div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Max Points</span>
+        <span class="val" id="val_max_points">500</span>
+      </div>
+      <input type="range" id="max_points" min="50" max="5000" step="50" value="500">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Contour Smooth</span>
+        <span class="val" id="val_contour_smooth">1.5</span>
+      </div>
+      <input type="range" id="contour_smooth" min="0" max="5" step="0.1" value="1.5">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Min Contour Area</span>
+        <span class="val" id="val_min_contour_area">10</span>
+      </div>
+      <input type="range" id="min_contour_area" min="1" max="500" step="1" value="10">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Declutter (min VW pts)</span>
+        <span class="val" id="val_min_vw_points">0</span>
+      </div>
+      <input type="range" id="min_vw_points" min="0" max="20" step="1" value="0">
+    </div>
+
+    <!-- Curves -->
+    <div class="section">Curves</div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Tension</span>
+        <span class="val" id="val_tension">0.5</span>
+      </div>
+      <input type="range" id="tension" min="0" max="1" step="0.05" value="0.5">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Straight Threshold</span>
+        <span class="val" id="val_straight_threshold">1.0</span>
+      </div>
+      <input type="range" id="straight_threshold" min="0" max="10" step="0.1" value="1.0">
+    </div>
+
+    <!-- Arc Detection -->
+    <div class="section">Arc Detection</div>
+
+    <label class="check-row">
+      <input type="checkbox" id="no_arcs">
+      Disable arc detection
+    </label>
+
+    <div class="slider-row" id="arc_tol_row">
+      <div class="slider-head">
+        <span>Tolerance</span>
+        <span class="val" id="val_arc_tolerance">1.5</span>
+      </div>
+      <input type="range" id="arc_tolerance" min="0.1" max="10" step="0.1" value="1.5">
+    </div>
+
+    <!-- Rendering -->
+    <div class="section">Rendering</div>
+
+    <div class="slider-row">
+      <div class="slider-head">
+        <span>Stroke Width</span>
+        <span class="val" id="val_stroke_width">2.0</span>
+      </div>
+      <input type="range" id="stroke_width" min="0.5" max="10" step="0.5" value="2.0">
+    </div>
+
+    <!-- Binarization -->
+    <div class="section">Binarization</div>
+
+    <label class="check-row">
+      <input type="checkbox" id="manual_threshold">
+      Manual threshold
+    </label>
+
+    <div class="slider-row" id="thresh_row" style="display:none">
+      <div class="slider-head">
+        <span>Threshold</span>
+        <span class="val" id="val_threshold">128</span>
+      </div>
+      <input type="range" id="threshold" min="0" max="255" step="1" value="128">
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn btn-primary"   id="traceBtn"    disabled>Trace</button>
+      <button class="btn btn-secondary" id="downloadBtn" disabled>Save SVG</button>
+    </div>
+
+  </aside>
+
+  <!-- ── Preview ────────────────────────────────────────────────────── -->
+  <main class="preview-area">
+
+    <div class="previews">
+      <div class="pane">
+        <div class="pane-title">Original</div>
+        <div class="pane-content" id="origPane">
+          <div class="placeholder">Upload an image to begin</div>
+        </div>
+      </div>
+      <div class="pane">
+        <div class="pane-title">Traced SVG</div>
+        <div class="pane-content" id="svgPane">
+          <div class="placeholder">Traced output will appear here</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats" id="statsBar">
+      <span>Contours: <strong id="s_contours">—</strong></span>
+      <span>Points: <strong id="s_points">—</strong></span>
+      <span>VW floor: <strong id="s_vw">—</strong> px²</span>
+      <span>Loss: <strong id="s_loss">—</strong> px</span>
+      <span id="s_arcs_wrap" style="display:none">Arcs: <strong id="s_arcs">—</strong></span>
+      <span id="s_freed_wrap" style="display:none">Freed: <strong id="s_freed">—</strong> pts</span>
+      <span class="warn-badge" id="warnBadge">⚠ warnings</span>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="spinner"></div>
+      <span>Tracing…</span>
+    </div>
+
+    <div class="error-toast" id="errorToast"></div>
+
+  </main>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────
+  let currentFile = null;
+  let currentSvgText = null;
+  let currentSvgEl = null;
+
+  // ── Live slider labels ─────────────────────────────────────────────
+  document.querySelectorAll('input[type="range"]').forEach(slider => {
+    slider.addEventListener('input', () => {
+      document.getElementById('val_' + slider.id).textContent = slider.value;
+      // Live stroke-width update (no server round-trip needed)
+      if (slider.id === 'stroke_width' && currentSvgEl) {
+        const g = currentSvgEl.querySelector('g');
+        if (g) g.setAttribute('stroke-width', slider.value);
+      }
+    });
+  });
+
+  // ── Toggle controls ────────────────────────────────────────────────
+  document.getElementById('no_arcs').addEventListener('change', e => {
+    const row = document.getElementById('arc_tol_row');
+    row.style.opacity        = e.target.checked ? '0.35' : '1';
+    row.style.pointerEvents  = e.target.checked ? 'none'  : '';
+    row.querySelector('input').disabled = e.target.checked;
+  });
+
+  document.getElementById('manual_threshold').addEventListener('change', e => {
+    document.getElementById('thresh_row').style.display = e.target.checked ? '' : 'none';
+  });
+
+  // ── File upload ────────────────────────────────────────────────────
+  const zone      = document.getElementById('uploadZone');
+  const fileInput = document.getElementById('fileInput');
+
+  zone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+  });
+
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', ()  => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  function loadFile(file) {
+    currentFile = file;
+    zone.classList.add('loaded');
+    document.getElementById('uploadIcon').textContent  = '🖼️';
+    document.getElementById('uploadLabel').textContent = file.name;
+    document.getElementById('uploadSub').textContent   = 'Click to change';
+
+    const url = URL.createObjectURL(file);
+    document.getElementById('origPane').innerHTML =
+      `<img src="${url}" alt="Original">`;
+
+    document.getElementById('traceBtn').disabled = false;
+    hideError();
+  }
+
+  // ── Trace ──────────────────────────────────────────────────────────
+  document.getElementById('traceBtn').addEventListener('click', async () => {
+    if (!currentFile) return;
+
+    const overlay  = document.getElementById('overlay');
+    const traceBtn = document.getElementById('traceBtn');
+    overlay.classList.add('visible');
+    traceBtn.disabled = true;
+    hideError();
+
+    const fd = new FormData();
+    fd.append('image', currentFile);
+    fd.append('max_points',         document.getElementById('max_points').value);
+    fd.append('contour_smooth',     document.getElementById('contour_smooth').value);
+    fd.append('tension',            document.getElementById('tension').value);
+    fd.append('straight_threshold', document.getElementById('straight_threshold').value);
+    fd.append('arc_tolerance',      document.getElementById('arc_tolerance').value);
+    fd.append('no_arcs',            document.getElementById('no_arcs').checked);
+    fd.append('stroke_width',       document.getElementById('stroke_width').value);
+    fd.append('min_contour_area',   document.getElementById('min_contour_area').value);
+    fd.append('min_vw_points',      document.getElementById('min_vw_points').value);
+    if (document.getElementById('manual_threshold').checked)
+      fd.append('threshold', document.getElementById('threshold').value);
+
+    try {
+      const resp = await fetch('/trace', { method: 'POST', body: fd });
+      if (!resp.ok) { showError(await resp.text()); return; }
+
+      const data = await resp.json();
+      currentSvgText = data.svg;
+
+      // Inline SVG (scaled to fill pane)
+      const parser = new DOMParser();
+      const doc    = parser.parseFromString(data.svg, 'image/svg+xml');
+      currentSvgEl = doc.documentElement;
+      currentSvgEl.setAttribute('width',  '100%');
+      currentSvgEl.setAttribute('height', '100%');
+      currentSvgEl.style.maxWidth  = '100%';
+      currentSvgEl.style.maxHeight = '100%';
+
+      const svgPane = document.getElementById('svgPane');
+      svgPane.innerHTML = '';
+      svgPane.appendChild(document.importNode(currentSvgEl, true));
+      // Keep reference to the live DOM node for stroke-width updates
+      currentSvgEl = svgPane.querySelector('svg');
+
+      // Stats
+      const s = data.stats;
+      document.getElementById('s_contours').textContent = s.contours;
+      document.getElementById('s_points').textContent   = s.points;
+      document.getElementById('s_vw').textContent       = s.vw_floor;
+      document.getElementById('s_loss').textContent     = s.loss;
+
+      const arcsWrap  = document.getElementById('s_arcs_wrap');
+      const freedWrap = document.getElementById('s_freed_wrap');
+
+      if (s.arc_count > 0) {
+        arcsWrap.style.display = '';
+        document.getElementById('s_arcs').textContent = s.arc_count + ' paths';
+      } else {
+        arcsWrap.style.display = 'none';
+      }
+
+      if (s.freed > 0) {
+        freedWrap.style.display = '';
+        document.getElementById('s_freed').textContent = s.freed;
+      } else {
+        freedWrap.style.display = 'none';
+      }
+
+      const warnBadge = document.getElementById('warnBadge');
+      warnBadge.classList.toggle('visible', s.warnings && s.warnings.length > 0);
+      if (s.warnings && s.warnings.length)
+        warnBadge.title = s.warnings.join('\n');
+
+      document.getElementById('statsBar').classList.add('visible');
+      document.getElementById('downloadBtn').disabled = false;
+
+    } catch (err) {
+      showError('Network error: ' + err.message);
+    } finally {
+      overlay.classList.remove('visible');
+      traceBtn.disabled = false;
+    }
+  });
+
+  // ── Download ───────────────────────────────────────────────────────
+  document.getElementById('downloadBtn').addEventListener('click', () => {
+    if (!currentSvgText) return;
+    const a = document.createElement('a');
+    a.href     = URL.createObjectURL(new Blob([currentSvgText], { type: 'image/svg+xml' }));
+    a.download = (currentFile?.name.replace(/\.[^.]+$/, '') || 'traced') + '.svg';
+    a.click();
+  });
+
+  // ── Error helpers ──────────────────────────────────────────────────
+  function showError(msg) {
+    const t = document.getElementById('errorToast');
+    t.textContent = msg;
+    t.classList.add('visible');
+  }
+  function hideError() {
+    document.getElementById('errorToast').classList.remove('visible');
+  }
+</script>
+</body>
+</html>

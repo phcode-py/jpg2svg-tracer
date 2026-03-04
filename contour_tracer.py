@@ -241,3 +241,117 @@ def find_contours_with_budget(
     weighted_loss = total_loss / total_original_points if total_original_points > 0 else 0.0
 
     return simplified_contours, min_area_global, weighted_loss
+
+
+def _rdp_contour(points: np.ndarray, epsilon: float) -> np.ndarray:
+    """Apply Ramer-Douglas-Peucker to a single (N, 2) contour."""
+    pts_cv = points.astype(np.float32).reshape(-1, 1, 2)
+    approx = cv2.approxPolyDP(pts_cv, epsilon, closed=True)
+    return approx.reshape(-1, 2).astype(np.float64)
+
+
+def _rdp_to_budget(points: np.ndarray, target_n: int) -> np.ndarray:
+    """RDP-simplify a single contour to approximately target_n points.
+
+    Binary-searches the per-contour epsilon using the contour's own bounding-box
+    diagonal as the upper bound — much tighter than the image diagonal and avoids
+    the global-epsilon failure mode where tiny contours collapse to <3 points.
+    """
+    target_n = max(3, target_n)
+    if len(points) <= target_n:
+        return points.copy()
+
+    # Upper bound: bounding-box diagonal of this contour (not the whole image).
+    span = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
+    lo, hi = 0.0, max(span, 1.0)
+
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if len(_rdp_contour(points, mid)) <= target_n:
+            hi = mid
+        else:
+            lo = mid
+
+    result = _rdp_contour(points, hi)
+    # If hi collapsed too far (< 3 pts), fall back to lo which is guaranteed to
+    # have enough points.
+    if len(result) < 3:
+        result = _rdp_contour(points, lo)
+    return result
+
+
+def find_contours_rdp(
+    binary: np.ndarray,
+    max_points: int = 500,
+    min_contour_area: float = 10.0,
+    contour_smooth: float = 0.0,
+) -> tuple[list[SimplifiedContour], float, float]:
+    """Detect and simplify contours using Ramer-Douglas-Peucker (RDP).
+
+    Better suited than VW for images with predominantly straight lines.
+    Allocates the point budget proportionally by raw contour length (identical
+    strategy to find_contours_with_budget) and runs a per-contour binary search
+    on epsilon — so every contour is guaranteed at least 3 points regardless of
+    the global budget, eliminating the "no contours found" failure and the
+    "confusing diagonal lines" artifact that occur with a single global epsilon.
+
+    Args:
+        binary: uint8 ndarray (H, W) with foreground as white.
+        max_points: Maximum total points across all output contours.
+        min_contour_area: Contours below this pixel area are discarded.
+        contour_smooth: Gaussian sigma applied before RDP. Typically 0 for
+            straight-line images (smoothing rounds corners).
+
+    Returns:
+        (simplified_contours, max_epsilon, weighted_loss) — same shape as
+        find_contours_with_budget. max_epsilon is the largest per-contour
+        RDP tolerance (px) used; 0 if no simplification was needed.
+    """
+    _, float_contours = find_raw_contours(binary, min_contour_area)
+
+    if not float_contours:
+        return [], 0.0, 0.0
+
+    if contour_smooth > 0.0:
+        float_contours = [
+            _smooth_contour(fc, contour_smooth, closed=True) for fc in float_contours
+        ]
+
+    raw_lengths = [len(c) for c in float_contours]
+    total_raw = sum(raw_lengths)
+
+    simplified_contours: list[SimplifiedContour] = []
+    total_loss = 0.0
+    total_original_points = 0
+    max_epsilon = 0.0
+
+    for fc, raw_len in zip(float_contours, raw_lengths):
+        budget = round(max_points * raw_len / total_raw)
+        if budget < 3:
+            continue   # contour's share of the budget is too small for a valid polygon
+
+        if len(fc) <= budget:
+            simp = fc.copy()
+        else:
+            simp = _rdp_to_budget(fc, budget)
+            # Estimate this contour's epsilon for reporting (hi after convergence).
+            span = float(np.linalg.norm(fc.max(axis=0) - fc.min(axis=0)))
+            lo2, hi2 = 0.0, max(span, 1.0)
+            for _ in range(30):
+                mid = (lo2 + hi2) / 2
+                if len(_rdp_contour(fc, mid)) <= budget:
+                    hi2 = mid
+                else:
+                    lo2 = mid
+            max_epsilon = max(max_epsilon, hi2)
+
+        if len(simp) < 3:
+            continue
+
+        simplified_contours.append(simp)
+        n = len(fc)
+        total_loss += _compute_loss(fc, simp) * n
+        total_original_points += n
+
+    weighted_loss = total_loss / total_original_points if total_original_points > 0 else 0.0
+    return simplified_contours, max_epsilon, weighted_loss
