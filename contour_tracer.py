@@ -256,7 +256,7 @@ def _rdp_contour(points: np.ndarray, epsilon: float) -> np.ndarray:
     return approx.reshape(-1, 2).astype(np.float64)
 
 
-def _rdp_to_budget(points: np.ndarray, target_n: int) -> np.ndarray:
+def _rdp_to_budget(points: np.ndarray, target_n: int, eps_min: float = 0.0) -> np.ndarray:
     """RDP-simplify a single contour to approximately target_n points.
 
     Binary-searches the per-contour epsilon using the contour's own bounding-box
@@ -278,6 +278,7 @@ def _rdp_to_budget(points: np.ndarray, target_n: int) -> np.ndarray:
         else:
             lo = mid
 
+    hi = max(hi, eps_min)
     result = _rdp_contour(points, hi)
     # If hi collapsed too far (< 3 pts), fall back to lo which is guaranteed to
     # have enough points.
@@ -291,6 +292,7 @@ def find_contours_rdp(
     max_points: int = 500,
     min_contour_area: float = 10.0,
     contour_smooth: float = 0.0,
+    eps_min: float = 0.0,
 ) -> tuple[list[SimplifiedContour], float, float]:
     """Detect and simplify contours using Ramer-Douglas-Peucker (RDP).
 
@@ -339,7 +341,7 @@ def find_contours_rdp(
         if len(fc) <= budget:
             simp = fc.copy()
         else:
-            simp = _rdp_to_budget_open(fc, budget)
+            simp = _rdp_to_budget_open(fc, budget, eps_min=eps_min)
             # Estimate this contour's epsilon for reporting (hi after convergence).
             pts_cv = fc.astype(np.float32).reshape(-1, 1, 2)
             span = float(np.linalg.norm(fc.max(axis=0) - fc.min(axis=0)))
@@ -350,7 +352,7 @@ def find_contours_rdp(
                     hi2 = mid
                 else:
                     lo2 = mid
-            max_epsilon = max(max_epsilon, hi2)
+            max_epsilon = max(max_epsilon, max(hi2, eps_min))
 
         if len(simp) < 2:
             continue
@@ -364,7 +366,7 @@ def find_contours_rdp(
     return simplified_contours, max_epsilon, weighted_loss
 
 
-def _rdp_to_budget_open(points: np.ndarray, target_n: int) -> np.ndarray:
+def _rdp_to_budget_open(points: np.ndarray, target_n: int, eps_min: float = 0.0) -> np.ndarray:
     """RDP-simplify an open path to approximately target_n points (minimum 2)."""
     target_n = max(2, target_n)
     if len(points) <= target_n:
@@ -378,6 +380,7 @@ def _rdp_to_budget_open(points: np.ndarray, target_n: int) -> np.ndarray:
             hi = mid
         else:
             lo = mid
+    hi = max(hi, eps_min)
     result = cv2.approxPolyDP(pts_cv, hi, closed=False).reshape(-1, 2).astype(np.float64)
     if len(result) < 2:
         result = cv2.approxPolyDP(pts_cv, lo, closed=False).reshape(-1, 2).astype(np.float64)
@@ -390,6 +393,7 @@ def find_skeleton_paths(
     min_contour_area: float = 10.0,
     contour_smooth: float = 0.0,
     simplify: str = "rdp",
+    eps_min: float = 0.0,
 ) -> tuple[list[SimplifiedContour], float, float]:
     """Extract and simplify centerline skeleton paths from a binary image.
 
@@ -440,7 +444,7 @@ def find_skeleton_paths(
                 simp = path.copy()
                 eps = 0.0
             else:
-                simp = _rdp_to_budget_open(path, budget)
+                simp = _rdp_to_budget_open(path, budget, eps_min=eps_min)
                 # Estimate per-path epsilon for reporting.
                 span = float(np.linalg.norm(path.max(axis=0) - path.min(axis=0)))
                 lo2, hi2 = 0.0, max(span, 1.0)
@@ -451,7 +455,7 @@ def find_skeleton_paths(
                         hi2 = mid
                     else:
                         lo2 = mid
-                eps = hi2
+                eps = max(hi2, eps_min)
             global_metric = max(global_metric, eps)
             if len(simp) < 2:
                 continue

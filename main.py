@@ -122,6 +122,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--eps-min",
+        type=float, default=0.0, dest="eps_min",
+        help=(
+            "Minimum RDP epsilon (px). Prevents epsilon from going below this value. "
+            "Use ~0.5-1.0 to collapse staircase artifacts on diagonal lines into single segments. "
+            "0 = disabled (default)."
+        ),
+    )
+    parser.add_argument(
         "--testing",
         action="store_true", default=False,
         help=(
@@ -159,6 +168,7 @@ def main() -> None:
             skeletonize=args.skeletonize,
             thick_threshold=args.thick_threshold,
             testing_prefix=testing_prefix,
+            eps_min=args.eps_min,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

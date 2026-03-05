@@ -50,6 +50,7 @@ def trace(
     skeletonize: bool | None = None,
     thick_threshold: int | None = None,
     testing_prefix: str | None = None,
+    eps_min: float = 0.0,
 ) -> tuple[str, dict]:
     """Run the full tracing pipeline.
 
@@ -116,6 +117,7 @@ def trace(
                 min_contour_area=min_contour_area,
                 contour_smooth=0.0,
                 simplify="rdp",
+                eps_min=eps_min,
             )
         collected_warnings.extend(str(w.message) for w in caught)
 
@@ -130,33 +132,41 @@ def trace(
             closed=False,
         )
 
-        # Pass 2: RDP on the full image (regular threshold).
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            rdp_contours, rdp_epsilon, rdp_loss = find_contours_rdp(
-                binary,
-                max_points=rdp_budget,
-                min_contour_area=min_contour_area,
-                contour_smooth=contour_smooth,
+        if testing_prefix is not None:
+            # Testing mode: skip pass 2, output skeleton-only SVG.
+            path_strings = skel_path_strings
+            simplified_contours = skel_paths
+            epsilon = skel_metric
+            loss = skel_loss
+        else:
+            # Pass 2: RDP on the full image (regular threshold).
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                rdp_contours, rdp_epsilon, rdp_loss = find_contours_rdp(
+                    binary,
+                    max_points=rdp_budget,
+                    min_contour_area=min_contour_area,
+                    contour_smooth=contour_smooth,
+                    eps_min=eps_min,
+                )
+            collected_warnings.extend(str(w.message) for w in caught)
+
+            if min_vw_points > 0:
+                rdp_contours = [c for c in rdp_contours if len(c) > min_vw_points]
+
+            rdp_path_strings = contours_to_svg_paths(
+                rdp_contours,
+                tension=tension,
+                straight_threshold=float("inf"),
+                arc_tolerance=None,
+                closed=True,
             )
-        collected_warnings.extend(str(w.message) for w in caught)
 
-        if min_vw_points > 0:
-            rdp_contours = [c for c in rdp_contours if len(c) > min_vw_points]
-
-        rdp_path_strings = contours_to_svg_paths(
-            rdp_contours,
-            tension=tension,
-            straight_threshold=float("inf"),
-            arc_tolerance=None,
-            closed=True,
-        )
-
-        path_strings = skel_path_strings + rdp_path_strings
-        simplified_contours = skel_paths + rdp_contours
-        epsilon = max(skel_metric, rdp_epsilon)
-        total_n = len(skel_paths) + len(rdp_contours)
-        loss = (skel_loss * len(skel_paths) + rdp_loss * len(rdp_contours)) / total_n if total_n > 0 else 0.0
+            path_strings = skel_path_strings + rdp_path_strings
+            simplified_contours = skel_paths + rdp_contours
+            epsilon = max(skel_metric, rdp_epsilon)
+            total_n = len(skel_paths) + len(rdp_contours)
+            loss = (skel_loss * len(skel_paths) + rdp_loss * len(rdp_contours)) / total_n if total_n > 0 else 0.0
 
     elif use_skel:
         # Skeleton centerline path: bypass perimeter contours entirely.
@@ -168,6 +178,7 @@ def trace(
                 min_contour_area=min_contour_area,
                 contour_smooth=0.0,
                 simplify=simplify,
+                eps_min=eps_min,
             )
         collected_warnings.extend(str(w.message) for w in caught)
 
@@ -192,6 +203,7 @@ def trace(
                         max_points=budget,
                         min_contour_area=min_contour_area,
                         contour_smooth=contour_smooth,
+                        eps_min=eps_min,
                     )
                 else:
                     result = find_contours_with_budget(
