@@ -50,6 +50,16 @@ def load_and_binarize(
             "Try adjusting --threshold or check the input image."
         )
 
+    # Remove isolated singular pixels (no 8-connected neighbors) — pure noise.
+    fg = (binary > 0).astype(np.uint8)
+    padded = np.pad(fg, 1, constant_values=0)
+    neighbor_sum = (
+        padded[0:-2, 0:-2] + padded[0:-2, 1:-1] + padded[0:-2, 2:] +
+        padded[1:-1, 0:-2]                        + padded[1:-1, 2:] +
+        padded[2:,   0:-2] + padded[2:,   1:-1]   + padded[2:,   2:]
+    )
+    binary[fg.astype(bool) & (neighbor_sum == 0)] = 0
+
     return binary, (height, width)
 
 

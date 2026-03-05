@@ -121,6 +121,14 @@ def parse_args() -> argparse.Namespace:
             "Default: off for all modes (use --simplify arch for the combined approach)."
         ),
     )
+    parser.add_argument(
+        "--testing",
+        action="store_true", default=False,
+        help=(
+            "Save intermediate debug bitmaps alongside the output SVG: "
+            "the binarized image (and its skeleton, if skeleton mode is active)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -132,6 +140,7 @@ def main() -> None:
         args.output = base + ".svg"
 
     arc_tol = None if args.no_arcs else args.arc_tolerance
+    testing_prefix = os.path.splitext(args.output)[0] if args.testing else None
 
     print(f"Loading:  {args.input}")
     try:
@@ -149,6 +158,7 @@ def main() -> None:
             simplify=args.simplify,
             skeletonize=args.skeletonize,
             thick_threshold=args.thick_threshold,
+            testing_prefix=testing_prefix,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -187,6 +197,8 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Output:   {args.output}")
+    if args.testing:
+        print(f"Testing:  debug bitmaps saved with prefix {testing_prefix!r}")
 
 
 if __name__ == "__main__":

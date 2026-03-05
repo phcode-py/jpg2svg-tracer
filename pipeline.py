@@ -2,7 +2,9 @@
 
 import warnings
 
-from image_processing import load_and_binarize
+import cv2
+
+from image_processing import load_and_binarize, _zhang_suen_thin
 from contour_tracer import find_contours_with_budget, find_contours_rdp, find_skeleton_paths
 from bezier import contours_to_svg_paths
 from svg_writer import build_svg
@@ -47,6 +49,7 @@ def trace(
     simplify: str = "vw",
     skeletonize: bool | None = None,
     thick_threshold: int | None = None,
+    testing_prefix: str | None = None,
 ) -> tuple[str, dict]:
     """Run the full tracing pipeline.
 
@@ -86,6 +89,11 @@ def trace(
     freed = 0
     arc_count = 0
 
+    if testing_prefix is not None and simplify != "arch":
+        bitmap = _zhang_suen_thin(binary) if use_skel else binary
+        suffix = "_skeleton" if use_skel else "_binary"
+        cv2.imwrite(f"{testing_prefix}{suffix}.bmp", bitmap)
+
     if simplify == "arch":
         if thick_threshold is None:
             raise ValueError("simplify='arch' requires thick_threshold to be set")
@@ -95,6 +103,11 @@ def trace(
 
         # Pass 1: skeletonize the thick-lines-only image.
         binary_thick, _ = load_and_binarize(image_path, threshold=thick_threshold)
+
+        if testing_prefix is not None:
+            cv2.imwrite(f"{testing_prefix}_binary_thick.bmp", binary_thick)
+            cv2.imwrite(f"{testing_prefix}_skeleton_thick.bmp", _zhang_suen_thin(binary_thick))
+            cv2.imwrite(f"{testing_prefix}_binary.bmp", binary)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             skel_paths, skel_metric, skel_loss = find_skeleton_paths(
