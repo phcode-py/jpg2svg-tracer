@@ -472,3 +472,113 @@ def find_skeleton_paths(
 
     weighted_loss = total_loss / total_original if total_original > 0 else 0.0
     return simplified, global_metric, weighted_loss
+
+
+def find_arch_paths(
+    binary: np.ndarray,
+    max_points: int = 500,
+    min_contour_area: float = 10.0,
+    straight_threshold: float = 1.0,
+    eps_min: float = 0.0,
+) -> tuple[list[SimplifiedContour], list[SimplifiedContour], float, float]:
+    """Geometry-based two-pass arch mode simplification.
+
+    Skeletonizes the image once, then classifies each branch path by how
+    straight it is: paths whose maximum orthogonal deviation from the chord
+    joining their endpoints is < straight_threshold are encoded as exactly
+    two points (start + end).  The remaining budget is spent on curved /
+    detail paths simplified with RDP.
+
+    No retracing: each raw path goes to exactly one pass.
+    No point explosion: skeleton_paths() splits at junctions, so junction
+    pixels only ever appear as path endpoints, never duplicated mid-path.
+
+    Args:
+        binary:             uint8 (H, W) foreground-white image.
+        max_points:         Total point budget across both passes.
+        min_contour_area:   Paths with < sqrt(min_contour_area) raw pixels
+                            are discarded.
+        straight_threshold: Max orthogonal deviation (px) for a path to be
+                            classified as straight.  Raise for noisier images.
+        eps_min:            Minimum RDP epsilon for the curved pass.
+
+    Returns:
+        (straight_paths, curved_paths, max_rdp_epsilon, weighted_loss)
+    """
+    from image_processing import skeleton_paths as _skel_paths
+
+    min_px = max(4, int(min_contour_area ** 0.5))
+    raw_paths = _skel_paths(binary, min_path_pixels=min_px)
+    if not raw_paths:
+        return [], [], 0.0, 0.0
+
+    # Classify each raw path by maximum orthogonal deviation from its chord.
+    straight_raw: list[np.ndarray] = []
+    curved_raw: list[np.ndarray] = []
+    thresh_sq = straight_threshold ** 2
+
+    for path in raw_paths:
+        if len(path) < 3:
+            straight_raw.append(path)
+            continue
+        p0, p1 = path[0], path[-1]
+        seg = p1 - p0
+        seg_len = float(np.linalg.norm(seg))
+        if seg_len < 1e-6:
+            # Degenerate (closed loop): curved.
+            curved_raw.append(path)
+            continue
+        seg_unit = seg / seg_len
+        vecs = path - p0
+        proj = (vecs * seg_unit).sum(axis=1, keepdims=True) * seg_unit
+        max_dev_sq = float(np.max(np.sum((vecs - proj) ** 2, axis=1)))
+        if max_dev_sq < thresh_sq:
+            straight_raw.append(path)
+        else:
+            curved_raw.append(path)
+
+    # Pass 1: straight paths → exactly 2 points each (start + end).
+    straight_simplified: list[SimplifiedContour] = [
+        np.array([p[0], p[-1]], dtype=np.float64) for p in straight_raw
+    ]
+    curved_budget = max(0, max_points - 2 * len(straight_simplified))
+
+    if not curved_raw or curved_budget < 2:
+        return straight_simplified, [], 0.0, 0.0
+
+    # Pass 2: proportional RDP on curved paths with the remaining budget.
+    raw_lens = [len(p) for p in curved_raw]
+    total_raw = sum(raw_lens)
+
+    curved_simplified: list[SimplifiedContour] = []
+    max_eps = 0.0
+    tot_loss = 0.0
+    tot_orig = 0
+
+    for path, rlen in zip(curved_raw, raw_lens):
+        per_budget = max(2, round(curved_budget * rlen / total_raw))
+        if len(path) <= per_budget:
+            simp = path.copy()
+            eps = 0.0
+        else:
+            simp = _rdp_to_budget_open(path, per_budget, eps_min=eps_min)
+            pts_cv = path.astype(np.float32).reshape(-1, 1, 2)
+            span = float(np.linalg.norm(path.max(axis=0) - path.min(axis=0)))
+            lo2, hi2 = 0.0, max(span, 1.0)
+            for _ in range(30):
+                mid = (lo2 + hi2) / 2
+                if len(cv2.approxPolyDP(pts_cv, mid, closed=False)) <= per_budget:
+                    hi2 = mid
+                else:
+                    lo2 = mid
+            eps = max(hi2, eps_min)
+        if len(simp) < 2:
+            continue
+        curved_simplified.append(simp)
+        max_eps = max(max_eps, eps)
+        n = len(path)
+        tot_loss += _compute_loss(path, simp) * n
+        tot_orig += n
+
+    weighted_loss = tot_loss / tot_orig if tot_orig > 0 else 0.0
+    return straight_simplified, curved_simplified, max_eps, weighted_loss

@@ -62,6 +62,7 @@ def trace_endpoint():
             simplify=simplify,
             skeletonize=skeletonize,
             thick_threshold=thick_threshold,
+            eps_min=float(request.form.get("eps_min", 0.0)),
         )
     except (FileNotFoundError, ValueError) as exc:
         return Response(str(exc), status=400)

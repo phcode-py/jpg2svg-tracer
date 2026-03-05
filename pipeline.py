@@ -5,7 +5,7 @@ import warnings
 import cv2
 
 from image_processing import load_and_binarize, _zhang_suen_thin
-from contour_tracer import find_contours_with_budget, find_contours_rdp, find_skeleton_paths
+from contour_tracer import find_contours_with_budget, find_contours_rdp, find_skeleton_paths, find_arch_paths
 from bezier import contours_to_svg_paths
 from svg_writer import build_svg
 
@@ -57,15 +57,15 @@ def trace(
     Args:
         simplify: "vw" (Visvalingam-Whyatt + Catmull-Rom, default),
                   "rdp" (Ramer-Douglas-Peucker + straight lines), or
-                  "arch" (Architectural Plan: two-pass — skeleton on thick lines
-                  at thick_threshold, then RDP on full image).
+                  "arch" (Architectural Plan: geometry-based two-pass —
+                  skeletonize once, classify paths by straightness, encode
+                  straight paths as 2-point lines, spend remaining budget on
+                  curved/detail paths with RDP).
         skeletonize: If True, extract skeleton centerlines instead of perimeter
                   contours (eliminates "webbing" at thick-line intersections).
                   None (default) = auto: True for rdp, False for vw. Ignored
                   for arch mode.
-        thick_threshold: Binarization threshold (0-255) used in the first pass
-                  of arch mode to isolate only thick black lines. Required when
-                  simplify="arch".
+        thick_threshold: Unused in the current arch mode (kept for API compat).
 
     Returns:
         (svg_string, stats_dict)
@@ -96,77 +96,36 @@ def trace(
         cv2.imwrite(f"{testing_prefix}{suffix}.bmp", bitmap)
 
     if simplify == "arch":
-        if thick_threshold is None:
-            raise ValueError("simplify='arch' requires thick_threshold to be set")
-
-        skel_budget = max_points // 2
-        rdp_budget = max_points - skel_budget
-
-        # Pass 1: skeletonize the thick-lines-only image.
-        binary_thick, _ = load_and_binarize(image_path, threshold=thick_threshold)
-
         if testing_prefix is not None:
-            cv2.imwrite(f"{testing_prefix}_binary_thick.bmp", binary_thick)
-            cv2.imwrite(f"{testing_prefix}_skeleton_thick.bmp", _zhang_suen_thin(binary_thick))
-            cv2.imwrite(f"{testing_prefix}_binary.bmp", binary)
+            cv2.imwrite(f"{testing_prefix}_skeleton.bmp", _zhang_suen_thin(binary))
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            skel_paths, skel_metric, skel_loss = find_skeleton_paths(
-                binary_thick,
-                max_points=skel_budget,
+            straight_paths, curved_paths, epsilon, loss = find_arch_paths(
+                binary,
+                max_points=max_points,
                 min_contour_area=min_contour_area,
-                contour_smooth=0.0,
-                simplify="rdp",
+                straight_threshold=straight_threshold,
                 eps_min=eps_min,
             )
         collected_warnings.extend(str(w.message) for w in caught)
 
-        if min_vw_points > 0:
-            skel_paths = [c for c in skel_paths if len(c) > min_vw_points]
+        if testing_prefix is not None:
+            # Testing mode: pass 1 only (straight paths).
+            curved_paths = []
 
-        skel_path_strings = contours_to_svg_paths(
-            skel_paths,
+        if min_vw_points > 0:
+            straight_paths = [c for c in straight_paths if len(c) > min_vw_points]
+            curved_paths = [c for c in curved_paths if len(c) > min_vw_points]
+
+        simplified_contours = straight_paths + curved_paths
+        path_strings = contours_to_svg_paths(
+            simplified_contours,
             tension=tension,
             straight_threshold=float("inf"),
             arc_tolerance=None,
             closed=False,
         )
-
-        if testing_prefix is not None:
-            # Testing mode: skip pass 2, output skeleton-only SVG.
-            path_strings = skel_path_strings
-            simplified_contours = skel_paths
-            epsilon = skel_metric
-            loss = skel_loss
-        else:
-            # Pass 2: RDP on the full image (regular threshold).
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                rdp_contours, rdp_epsilon, rdp_loss = find_contours_rdp(
-                    binary,
-                    max_points=rdp_budget,
-                    min_contour_area=min_contour_area,
-                    contour_smooth=contour_smooth,
-                    eps_min=eps_min,
-                )
-            collected_warnings.extend(str(w.message) for w in caught)
-
-            if min_vw_points > 0:
-                rdp_contours = [c for c in rdp_contours if len(c) > min_vw_points]
-
-            rdp_path_strings = contours_to_svg_paths(
-                rdp_contours,
-                tension=tension,
-                straight_threshold=float("inf"),
-                arc_tolerance=None,
-                closed=True,
-            )
-
-            path_strings = skel_path_strings + rdp_path_strings
-            simplified_contours = skel_paths + rdp_contours
-            epsilon = max(skel_metric, rdp_epsilon)
-            total_n = len(skel_paths) + len(rdp_contours)
-            loss = (skel_loss * len(skel_paths) + rdp_loss * len(rdp_contours)) / total_n if total_n > 0 else 0.0
 
     elif use_skel:
         # Skeleton centerline path: bypass perimeter contours entirely.
